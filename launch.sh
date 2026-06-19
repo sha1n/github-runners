@@ -11,14 +11,48 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 
-PIDS=()
+PIDS=()    # process id of each launched runner (the run.sh wrapper)
+PGIDS=()   # matching process-group id, captured at launch time
 CLEANED_UP=false
+SELF_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
 
-# True if any started runner process is still alive.
+# Recursively send a signal to a process and all of its descendants. Used as a
+# fallback when job control is unavailable and we can't signal by group.
+kill_tree() {
+  local sig="$1" pid="$2" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$sig" "$child"
+  done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+
+# Send a signal to every runner. run.sh launches Runner.Listener as a *child*
+# (not via exec), and during a job there are Worker/job processes too, so we
+# must reach the whole subtree — signalling the lone run.sh pid is not enough.
+# When the runner leads its own process group (the normal job-control case) we
+# signal the group; otherwise we walk the process tree.
+signal_all() {
+  local sig="$1" i pg
+  for i in "${!PIDS[@]}"; do
+    pg="${PGIDS[$i]}"
+    if [[ -n "$pg" && "$pg" != "$SELF_PGID" ]]; then
+      kill -"$sig" "-$pg" 2>/dev/null || true
+    else
+      kill_tree "$sig" "${PIDS[$i]}"
+    fi
+  done
+}
+
+# True if any started runner (or a process in its group) is still alive.
 any_running() {
-  local pid
-  for pid in "${PIDS[@]}"; do
-    kill -0 "$pid" 2>/dev/null && return 0
+  local i pg
+  for i in "${!PIDS[@]}"; do
+    pg="${PGIDS[$i]}"
+    if [[ -n "$pg" && "$pg" != "$SELF_PGID" ]]; then
+      kill -0 "-$pg" 2>/dev/null && return 0
+    else
+      kill -0 "${PIDS[$i]}" 2>/dev/null && return 0
+    fi
   done
   return 1
 }
@@ -31,12 +65,10 @@ cleanup() {
 
   printf '\n'
   info "Stopping runners..."
-  local pid
-  for pid in "${PIDS[@]}"; do
-    kill -INT "$pid" 2>/dev/null || true
-  done
+  signal_all INT
 
-  # Give them time to shut down gracefully, then escalate to SIGTERM.
+  # Give them time to shut down gracefully, then escalate: SIGTERM, then
+  # SIGKILL as a last resort, so nothing is ever left running in the background.
   local waited=0
   while any_running && (( waited < 20 )); do
     sleep 1
@@ -44,11 +76,19 @@ cleanup() {
   done
   if any_running; then
     warn "Some runners did not stop in time; sending SIGTERM."
-    for pid in "${PIDS[@]}"; do
-      kill -TERM "$pid" 2>/dev/null || true
+    signal_all TERM
+    waited=0
+    while any_running && (( waited < 10 )); do
+      sleep 1
+      waited=$((waited + 1))
     done
   fi
+  if any_running; then
+    warn "Runners still alive; forcing shutdown with SIGKILL."
+    signal_all KILL
+  fi
 
+  local pid
   for pid in "${PIDS[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
@@ -70,22 +110,32 @@ main() {
 
   trap 'cleanup; exit 130' INT TERM
 
+  # Enable job control so each runner is placed in its own process group. This
+  # is what makes a clean stop possible: background jobs started *without* job
+  # control inherit SIG_IGN for SIGINT (and `trap -` only restores that ignored
+  # disposition), so Ctrl+C would never reach the runner. With job control the
+  # runner gets the default SIGINT handler and leads its own group, which we can
+  # signal as a unit in cleanup().
+  set -m
+
   for d in "${dirs[@]}"; do
     info "Starting $(basename "$d")"
-    # Reset INT/TERM to default in the child before exec so the runner's own
-    # signal handling works even though background jobs inherit SIG_IGN.
-    ( trap - INT TERM; cd "$d" && exec ./run.sh ) &
+    ( cd "$d" && exec ./run.sh ) &
     PIDS+=($!)
+    PGIDS+=("$(ps -o pgid= -p $! 2>/dev/null | tr -d ' ')")
   done
 
   info "Started ${#dirs[@]} runner(s). Press Ctrl+C or Ctrl+D to stop."
 
-  # Block until Ctrl+D (EOF) when interactive, or until the runners exit /
-  # a signal arrives otherwise. SIGINT/SIGTERM are handled by the trap.
+  # Block until Ctrl+D (EOF) when interactive, or until the runners exit
+  # otherwise. SIGINT/SIGTERM are handled by the trap. We poll with a
+  # foreground `sleep` rather than a bare `wait` because, with job control
+  # enabled, `wait` is not reliably interrupted by a trapped signal — the
+  # sleep loop is, so cleanup always runs.
   if [[ -t 0 ]]; then
     while IFS= read -r _; do :; done
   else
-    wait
+    while any_running; do sleep 1; done
   fi
 
   cleanup
