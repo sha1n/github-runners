@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # First-time setup: download the GitHub Actions runner once, then register
-# RUNNER_COUNT runners against the configured organization using one token.
+# RUNNER_COUNT runners against the configured organization. The credential
+# (RUNNER_TOKEN from the shell, a PAT or a registration token, or a logged-in
+# gh CLI) is resolved at run time — see resolve_registration_token.
 #
 # Idempotent: re-running only fills in missing/unconfigured runners. There is
 # deliberately no version-update path — live runners keep themselves current
@@ -60,6 +62,34 @@ fetch_published_sha256() {
     | grep -oE "BEGIN SHA ${asset} -->[0-9a-f]{64}" \
     | sed -nE 's/.*-->([0-9a-f]{64})/\1/p' \
     | sed -n '1p'
+}
+
+# Resolve a runner registration token into REG_TOKEN. RUNNER_TOKEN (from the
+# shell) may be a PAT — which we exchange for a registration token via the API —
+# or a registration token, used as-is. With no RUNNER_TOKEN we mint one through a
+# logged-in gh CLI.
+resolve_registration_token() {
+  if [[ -n "${RUNNER_TOKEN:-}" ]]; then
+    if looks_like_pat "$RUNNER_TOKEN"; then
+      info "RUNNER_TOKEN is a PAT — minting a registration token..."
+      AUTH_MODE="pat"
+      REG_TOKEN="$(mint_registration_token)" \
+        || die "could not mint a registration token. Ensure the PAT has the admin:org (or manage_runners:org) scope."
+    else
+      info "Using the provided RUNNER_TOKEN as a registration token."
+      REG_TOKEN="$RUNNER_TOKEN"
+    fi
+  elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    info "Minting a registration token via the gh CLI..."
+    AUTH_MODE="gh"
+    REG_TOKEN="$(mint_registration_token)" \
+      || die "could not mint a registration token via gh. Ensure the admin:org scope:
+    gh auth refresh -h github.com -s admin:org"
+  else
+    die "no credential available. Set RUNNER_TOKEN in your shell (a PAT or a
+  registration token), or log in with 'gh auth login'."
+  fi
+  [[ -n "${REG_TOKEN:-}" ]] || die "registration token resolution produced an empty token"
 }
 
 # Compute the SHA-256 of a file, using whichever tool is available.
@@ -134,7 +164,7 @@ configure_runners() {
       cd "$dir"
       ./config.sh --unattended \
         --url "https://github.com/${GITHUB_ORG}" \
-        --token "$RUNNER_TOKEN" \
+        --token "$REG_TOKEN" \
         --name "$name" \
         --labels "$labels" \
         --work "_work" \
@@ -174,6 +204,7 @@ main() {
   done
 
   load_env
+  warn_if_secret_in_env
   require_vars
   detect_platform
 
@@ -182,6 +213,7 @@ main() {
     exit 0
   fi
 
+  resolve_registration_token
   resolve_version
   download_runner
   configure_runners

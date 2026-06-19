@@ -4,31 +4,30 @@ Home for a fleet of [GitHub Actions self-hosted runners](https://docs.github.com
 running as native processes on this machine, registered at the **organization**
 level.
 
-Two scripts:
+Three scripts:
 
 - **`register.sh`** — first-time setup: downloads the runner once and registers
-  N runners with a single token.
+  N runners.
 - **`launch.sh`** — starts all registered runners and stops them cleanly on
   `Ctrl+C` / `Ctrl+D`.
+- **`unregister.sh`** — deregisters this machine's runners from the org.
 
 ## Setup
 
-1. Copy the config template and fill it in:
+1. Copy the config template and fill it in. `.env` holds **non-secret config
+   only** — the credential is supplied separately (see [Authentication](#authentication)):
 
    ```sh
    cp .env.example .env
    ```
 
-   | Variable                  | Required | Description                                                        |
-   |---------------------------|----------|--------------------------------------------------------------------|
-   | `GITHUB_ORG`              | yes      | Organization the runners attach to.                                |
-   | `RUNNER_TOKEN`            | yes      | Org registration token (Org Settings → Actions → Runners → New).   |
-   | `RUNNER_COUNT`            | yes      | How many runners to register/launch.                               |
-   | `RUNNER_NAME_PREFIX`      | no       | Name prefix; defaults to this machine's short hostname.            |
-   | `RUNNER_LABELS`           | no       | Extra labels, appended to `self-hosted,<os>,<arch>`.               |
-   | `RUNNER_DOWNLOAD_VERSION` | no       | Runner release to download; defaults to `latest`.                  |
-
-   The registration token is valid for ~1 hour and is reused for every runner.
+   | Variable                  | Required | Description                                             |
+   |---------------------------|----------|---------------------------------------------------------|
+   | `GITHUB_ORG`              | yes      | Organization the runners attach to.                     |
+   | `RUNNER_COUNT`            | yes      | How many runners to register/launch.                    |
+   | `RUNNER_NAME_PREFIX`      | no       | Name prefix; defaults to this machine's short hostname. |
+   | `RUNNER_LABELS`           | no       | Extra labels, appended to `self-hosted,<os>,<arch>`.    |
+   | `RUNNER_DOWNLOAD_VERSION` | no       | Runner release to download; defaults to `latest`.       |
 
 2. Register the runners:
 
@@ -45,6 +44,59 @@ Two scripts:
 
    Press `Ctrl+C` or `Ctrl+D` to stop. The runners go offline but stay
    registered, so the next `./launch.sh` is instant.
+
+## Authentication
+
+The credential is read from your **shell environment**, never from `.env`, so
+the secret is not persisted to disk. Provide it either way:
+
+- **`gh` CLI (recommended).** Run `gh auth login` once; both scripts use it
+  automatically. Add the required scope with:
+
+  ```sh
+  gh auth refresh -h github.com -s admin:org
+  ```
+
+- **`RUNNER_TOKEN` env var.** Export it (or prefix the command). It accepts
+  **either** kind of token interchangeably — the script detects which by its
+  format (PATs have a `ghp_`/`github_pat_`/… prefix; registration tokens don't):
+
+  | `RUNNER_TOKEN` value                            | `register.sh`                              | `unregister.sh`            |
+  |-------------------------------------------------|--------------------------------------------|----------------------------|
+  | **PAT** (`admin:org` / `manage_runners:org`)    | exchanged via API for a registration token | used directly for the API  |
+  | **Registration token** (Org → Runners → New)    | passed straight to `config.sh`             | not usable (needs a PAT)   |
+
+  ```sh
+  export RUNNER_TOKEN=ghp_xxxxxxxx     # PAT: works for both scripts
+  # or, one-off:
+  RUNNER_TOKEN=ghp_xxxxxxxx ./register.sh
+  ```
+
+Resolution order: `register.sh` prefers an explicit `RUNNER_TOKEN`, else falls
+back to `gh`; `unregister.sh` prefers `gh`, else a PAT in `RUNNER_TOKEN`. A
+registration token is short-lived (~1 hour); a PAT is reusable. If you put
+`RUNNER_TOKEN` in `.env`, `register.sh` warns you to move it to your shell.
+
+## Unregister
+
+To remove this machine's runners from the organization (the counterpart to
+`register.sh`):
+
+```sh
+./unregister.sh            # confirm, then deregister + clean local config
+./unregister.sh --dry-run  # show what would be removed, contact nothing
+./unregister.sh --yes      # skip the confirmation prompt
+./unregister.sh --purge    # also delete the runners/runner-N directories
+```
+
+It deletes every org runner whose name matches this machine's prefix
+(`<prefix>-N`) via the GitHub API, then clears each local runner's
+configuration (binaries are kept unless `--purge`).
+
+This needs API access — a `gh` login or a PAT in `RUNNER_TOKEN`, both with the
+`admin:org` (or `manage_runners:org`) scope — see [Authentication](#authentication).
+Stop `launch.sh` before unregistering; the script refuses to run while any
+runner process is alive.
 
 ## How it works
 
