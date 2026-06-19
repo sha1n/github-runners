@@ -1,0 +1,7 @@
+# Local secrets and runtime state
+.env
+runners/
+.cache/
+
+# Brainstorming/spec docs are kept local, not committed
+docs/superpowers/
