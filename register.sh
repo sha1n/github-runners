@@ -136,6 +136,32 @@ download_runner() {
   info "Checksum verified."
 }
 
+# Write the runner's .env so every job runs with an isolated global git config.
+# actions/checkout records `safe.directory` via `git config --global`, and its
+# post-job cleanup step is skipped whenever a job is killed (e.g. launch.sh's
+# SIGKILL escalation) — left unchecked those entries pile up in the operator's
+# real ~/.gitconfig. Pointing GIT_CONFIG_GLOBAL at a throwaway file inside the
+# runner's own dir keeps them out of it. git creates the file on first write, so
+# there is nothing to pre-generate and nothing is copied from ~/.gitconfig. The
+# file is per-runner (not shared) so the concurrent `git config` writes that
+# happen when launch.sh starts every runner at once cannot race each other.
+provision_runner_env() {
+  local dir="$1" env_file="$1/.env"
+  # Gated by ISOLATE_GIT_CONFIG in the repo-root .env; enabled unless set false.
+  # Lowercase first (Bash 3.2 has no ${var,,}) so "False"/"Off" also disable it.
+  local toggle
+  toggle="$(printf '%s' "${ISOLATE_GIT_CONFIG:-true}" | tr '[:upper:]' '[:lower:]')"
+  case "$toggle" in
+    false|no|0|off) return 0 ;;
+  esac
+  local line="GIT_CONFIG_GLOBAL=$dir/.gitconfig-ci"
+  if [[ -f "$env_file" ]] && grep -qxF "$line" "$env_file"; then
+    return 0
+  fi
+  printf '%s\n' "$line" >> "$env_file"
+  info "Isolated global git config for $(basename "$dir") via $env_file"
+}
+
 # Extract (if needed) and register each runner.
 configure_runners() {
   local labels prefix
@@ -153,6 +179,8 @@ configure_runners() {
       info "Extracting runner into $dir"
       tar -xzf "$TARBALL" -C "$dir"
     fi
+
+    provision_runner_env "$dir"
 
     if [[ -f "$dir/.runner" ]]; then
       info "runner-$i already configured (${name}); skipping"

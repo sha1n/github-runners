@@ -10,7 +10,10 @@ runners** as native processes on one machine, registered at the
 
 - `register.sh` — first-time setup: download the runner once, register
   `RUNNER_COUNT` runners. Idempotent; no version-update path (runners
-  auto-update at runtime).
+  auto-update at runtime). Also provisions each `runners/runner-N/.env` with
+  `GIT_CONFIG_GLOBAL` (unless `ISOLATE_GIT_CONFIG=false`) so the
+  `safe.directory` entries `actions/checkout` writes via `git config --global`
+  stay out of the operator's `~/.gitconfig`.
 - `launch.sh` — start all registered runners; stop them cleanly on `Ctrl+C`
   (SIGINT) or `Ctrl+D` (EOF). Uses job control so each runner leads its own
   process group, then signals the group (SIGINT → SIGTERM → SIGKILL).
@@ -24,8 +27,9 @@ runners** as native processes on one machine, registered at the
 ## Authentication & secrets — IMPORTANT
 
 The credential is **never stored in `.env`**. `.env` holds non-secret config
-only (`GITHUB_ORG`, `RUNNER_COUNT`, prefix, labels, download version). The
-secret comes from the **shell environment** so it is not persisted to disk.
+only (`GITHUB_ORG`, `RUNNER_COUNT`, prefix, labels, download version,
+`ISOLATE_GIT_CONFIG`). The secret comes from the **shell environment** so it is
+not persisted to disk.
 
 Two sources, resolved at run time:
 
@@ -68,7 +72,10 @@ hint on a 403/scope failure.
 
 - Runtime state is gitignored and untracked: `.env`, `runners/`, `.cache/`.
   Never assume `runners/` is empty — it holds real registered runners
-  (each is an unpacked `actions/runner` with `.runner`/`.credentials`).
+  (each is an unpacked `actions/runner` with `.runner`/`.credentials`, a
+  per-runner `.env`, and a runtime `.gitconfig-ci`). The runner **rewrites its
+  own `.env`** (it reorders keys), so keep provisioned entries to bare
+  `KEY=VALUE` lines — comments there will not survive.
   **Do not write test fixtures into `runners/`**; use a temp dir.
 - `docs/superpowers/` is gitignored (local design specs).
 

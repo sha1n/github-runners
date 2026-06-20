@@ -114,3 +114,10 @@ runner process is alive.
 - **Linux:** the runner needs some system libraries. If `config.sh` complains,
   run `runners/runner-1/bin/installdependencies.sh` (needs `sudo`) once.
 - Secrets and runtime state (`.env`, `runners/`, `.cache/`) are gitignored.
+- **Isolated git config:** `register.sh` writes `GIT_CONFIG_GLOBAL` into each
+  `runners/runner-N/.env`, pointing at a throwaway `.gitconfig-ci` in the
+  runner's own dir. This keeps the `safe.directory` entries that
+  `actions/checkout` adds with `git config --global` out of your real
+  `~/.gitconfig` — they would otherwise accumulate there because checkout's
+  cleanup step is skipped whenever a job is killed. The file is created by git
+  on first use; nothing is copied from `~/.gitconfig`.
