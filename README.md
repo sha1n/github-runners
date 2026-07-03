@@ -11,6 +11,8 @@ Three scripts:
 - **`launch.sh`** — starts all registered runners and stops them cleanly on
   `Ctrl+C` / `Ctrl+D`.
 - **`unregister.sh`** — deregisters this machine's runners from the org.
+- **`fix-zombie-runners.sh`** — detects and recovers runners stuck with a
+  stale GitHub session (see [Zombie runners](#zombie-runners)).
 
 ## Setup
 
@@ -97,6 +99,31 @@ This needs API access — a `gh` login or a PAT in `RUNNER_TOKEN`, both with the
 `admin:org` (or `manage_runners:org`) scope — see [Authentication](#authentication).
 Stop `launch.sh` before unregistering; the script refuses to run while any
 runner process is alive.
+
+## Zombie runners
+
+If a runner process dies without a clean shutdown (crash, `SIGKILL`, the host
+sleeping), GitHub's broker can be left holding a stale session for it. The
+next `run.sh` then loops forever, and its `_diag/Runner_*.log` shows:
+
+```
+TaskAgentSessionConflictException: Error: Conflict
+The session for this runner already exists.
+```
+
+Fix it with:
+
+```sh
+./fix-zombie-runners.sh            # detect + fix, then re-register via register.sh
+./fix-zombie-runners.sh --dry-run  # show which runners are stuck, fix nothing
+```
+
+It clears the local files that block re-registration (including
+`.runner_migrated`, a broker-migration marker that makes `config.sh` refuse to
+reconfigure even after `.runner`/`.credentials` are removed) and re-registers
+via `register.sh` with `--replace`, which clears the stuck session on GitHub's
+side too. Like `unregister.sh`, it refuses to run while any runner process is
+alive.
 
 ## How it works
 

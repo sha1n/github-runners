@@ -19,7 +19,18 @@ runners** as native processes on one machine, registered at the
   process group, then signals the group (SIGINT → SIGTERM → SIGKILL).
 - `unregister.sh` — delete this machine's runners from the org via the API and
   clean local config. `--dry-run`, `--yes`, `--purge`.
-- `lib/common.sh` — shared helpers, sourced by all three. Logging
+- `fix-zombie-runners.sh` — detect and recover runners stuck with a stale
+  GitHub broker session (a runner process killed non-gracefully — crash,
+  SIGKILL, host sleep — never closes its session, so a fresh `run.sh` gets
+  `TaskAgentSessionConflictException` / "A session for this runner already
+  exists" forever). Clears the local files that block re-registration
+  (`.runner`, `.credentials`, `.credentials_rsaparams`, `.runner_migrated` —
+  the last one is a broker-migration marker that makes `config.sh` refuse to
+  reconfigure even after the others are gone) and delegates to `register.sh`
+  to redo the registration with `--replace`, which clears the stuck session
+  on GitHub's side too. `--dry-run` shows which runners are stuck without
+  touching anything.
+- `lib/common.sh` — shared helpers, sourced by all four. Logging
   (`info`/`warn`/`die`), `load_env`, `require_vars`, platform detection,
   runner naming, and GitHub auth (`resolve_auth`, `api`, `looks_like_pat`,
   `mint_registration_token`).
