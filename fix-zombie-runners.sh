@@ -13,6 +13,12 @@
 # (idempotent: it only touches runners lacking a .runner file) to redo the
 # actual registration.
 #
+# Refuses to run while launch.sh is actively supervising the runners (defers
+# to it, since killing them out from under it could interrupt a running
+# job). If runner processes are alive but orphaned — launch.sh itself died
+# without running its cleanup (crash, closed terminal) — stops them first,
+# since nothing else is left to.
+#
 # Usage:
 #   ./fix-zombie-runners.sh            detect + fix, then re-register via register.sh
 #   ./fix-zombie-runners.sh --dry-run  show which runners are stuck, fix nothing
@@ -38,7 +44,10 @@ For each one, clears the local files that block re-registration (.runner,
 ./register.sh, whose "--replace" registration clears the stuck session on
 GitHub's side too.
 
-Refuses to run while any runner process is alive — stop launch.sh first.
+Refuses to run while launch.sh is actively supervising the runners — stop it
+first. If runner processes are alive but orphaned (launch.sh itself died —
+crash, closed terminal — leaving them with no supervisor), this script stops
+them itself before proceeding (skipped in --dry-run, which only reports them).
 EOF
 }
 
@@ -84,10 +93,12 @@ main() {
     shift
   done
 
-  # Don't touch a runner's local state while it might be mid-retry.
-  if pgrep -f "$RUNNERS_DIR/runner-" >/dev/null 2>&1; then
-    die "runners appear to be running. Stop launch.sh (Ctrl+C/Ctrl+D) first."
-  fi
+  # Don't touch a runner's local state while it might be mid-retry. If
+  # launch.sh is actively supervising the runners, defer to it. If launch.sh
+  # is gone but runner processes remain (it crashed, its terminal was
+  # closed, etc.), they're orphaned with nothing supervising them, so stop
+  # them ourselves before proceeding.
+  ensure_runners_stopped "$dry_run"
 
   [[ -d "$RUNNERS_DIR" ]] || die "no runners directory found at ${RUNNERS_DIR} — run ./register.sh first"
 

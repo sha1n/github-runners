@@ -29,11 +29,17 @@ runners** as native processes on one machine, registered at the
   reconfigure even after the others are gone) and delegates to `register.sh`
   to redo the registration with `--replace`, which clears the stuck session
   on GitHub's side too. `--dry-run` shows which runners are stuck without
-  touching anything.
+  touching anything. Refuses to run while `launch.sh` is actively
+  supervising the runners, but if runner processes are alive and orphaned
+  (`launch.sh` itself died — crash, closed terminal — without cleaning up),
+  stops them itself first via `ensure_runners_stopped` rather than telling
+  the operator to stop a process that no longer exists.
 - `lib/common.sh` — shared helpers, sourced by all four. Logging
   (`info`/`warn`/`die`), `load_env`, `require_vars`, platform detection,
-  runner naming, and GitHub auth (`resolve_auth`, `api`, `looks_like_pat`,
-  `mint_registration_token`).
+  runner naming, GitHub auth (`resolve_auth`, `api`, `looks_like_pat`,
+  `mint_registration_token`), and process management (`kill_tree`,
+  `launch_sh_running`, `runner_pids`, `stop_orphaned_runners`,
+  `ensure_runners_stopped`).
 
 ## Authentication & secrets — IMPORTANT
 
@@ -101,3 +107,8 @@ There is no test framework. Validate with:
   dir (a `run.sh` that spawns a long-lived child, *not* via `exec`) and assert
   no processes survive Ctrl+C/Ctrl+D. Test interactively via a pty — the
   interactive path differs from the non-interactive one.
+- `./tests/test_process_helpers.sh` — automated tests for the
+  `lib/common.sh` process-management helpers (`runner_pids`,
+  `stop_orphaned_runners`, `launch_sh_running`, `ensure_runners_stopped`),
+  run against a mock runner tree in a temp dir. Run it after touching any of
+  those functions.
