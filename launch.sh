@@ -16,15 +16,8 @@ PGIDS=()   # matching process-group id, captured at launch time
 CLEANED_UP=false
 SELF_PGID="$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')"
 
-# Recursively send a signal to a process and all of its descendants. Used as a
-# fallback when job control is unavailable and we can't signal by group.
-kill_tree() {
-  local sig="$1" pid="$2" child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do
-    kill_tree "$sig" "$child"
-  done
-  kill -"$sig" "$pid" 2>/dev/null || true
-}
+# kill_tree (used as a fallback when job control is unavailable and we can't
+# signal by group) comes from lib/common.sh, sourced above.
 
 # Send a signal to every runner. run.sh launches Runner.Listener as a *child*
 # (not via exec), and during a job there are Worker/job processes too, so we

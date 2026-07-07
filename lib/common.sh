@@ -144,3 +144,75 @@ runner_labels() {
 runner_prefix() {
   printf '%s' "${RUNNER_NAME_PREFIX:-$(hostname -s)}"
 }
+
+# --- process management -------------------------------------------------
+
+# Recursively send SIGNAL to a process and all its descendants. Needed
+# because run.sh launches its children as plain background jobs (not via
+# exec), so signalling the top pid alone would not reach them.
+kill_tree() {
+  local sig="$1" pid="$2" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    kill_tree "$sig" "$child"
+  done
+  kill -"$sig" "$pid" 2>/dev/null || true
+}
+
+# True if this machine's launch.sh is actively supervising the runners.
+launch_sh_running() {
+  pgrep -f "$REPO_ROOT/launch.sh" >/dev/null 2>&1
+}
+
+# PIDs of every live top-level runner run.sh process.
+runner_pids() {
+  pgrep -f "$RUNNERS_DIR/runner-.*/run\.sh" 2>/dev/null || true
+}
+
+# Stop every live runner process tree, escalating SIGINT -> SIGTERM ->
+# SIGKILL (same as launch.sh's own cleanup). Used when no launch.sh remains
+# to do it — e.g. it crashed or its terminal was closed, leaving orphaned
+# runner processes with no supervisor to interrupt them.
+stop_orphaned_runners() {
+  local sig pid pids waited
+  for sig in INT TERM KILL; do
+    pids="$(runner_pids)"
+    [[ -n "$pids" ]] || return 0
+    for pid in $pids; do
+      kill_tree "$sig" "$pid"
+    done
+    waited=0
+    while [[ -n "$(runner_pids)" ]] && (( waited < 10 )); do
+      sleep 1
+      waited=$((waited + 1))
+    done
+  done
+  [[ -z "$(runner_pids)" ]]
+}
+
+# Ensure no runner process is left alive before mutating local runner state
+# (credentials, .runner, etc.):
+#   - if launch.sh is actively supervising them, refuse — let it own them,
+#     since killing them out from under it could interrupt a running job.
+#   - if they're orphaned (launch.sh is gone) and dry_run is true, just
+#     report that they would be stopped.
+#   - if they're orphaned and dry_run is false, stop them.
+# Dies with an actionable message if runners are still alive afterwards.
+ensure_runners_stopped() {
+  local dry_run="$1"
+  pgrep -f "$RUNNERS_DIR/runner-" >/dev/null 2>&1 || return 0
+
+  if launch_sh_running; then
+    die "runners appear to be running under launch.sh. Stop it (Ctrl+C/Ctrl+D) first."
+  fi
+
+  if [[ "$dry_run" == "true" ]]; then
+    info "found orphaned runner processes (no launch.sh supervising them) — would stop them"
+    return 0
+  fi
+
+  warn "found orphaned runner processes (no launch.sh supervising them) — stopping them"
+  stop_orphaned_runners
+  pgrep -f "$RUNNERS_DIR/runner-" >/dev/null 2>&1 \
+    && die "could not stop orphaned runner processes; stop them manually and retry."
+  return 0
+}
