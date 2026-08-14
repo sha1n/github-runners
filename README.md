@@ -4,15 +4,18 @@ Home for a fleet of [GitHub Actions self-hosted runners](https://docs.github.com
 running as native processes on this machine, registered at the **organization**
 level.
 
-Three scripts:
+Five scripts:
 
 - **`register.sh`** — first-time setup: downloads the runner once and registers
   N runners.
 - **`launch.sh`** — starts all registered runners and stops them cleanly on
-  `Ctrl+C` / `Ctrl+D`.
+  `Ctrl+C`, `Ctrl+D`, `Ctrl+\`, a closed terminal, or an error exit.
 - **`unregister.sh`** — deregisters this machine's runners from the org.
 - **`fix-zombie-runners.sh`** — detects and recovers runners stuck with a
   stale GitHub session (see [Zombie runners](#zombie-runners)).
+- **`nuke-runners.sh`** — force-stops a live `launch.sh` and every runner
+  process, for when they've been orphaned (see
+  [Orphaned runners](#orphaned-runners)).
 
 ## Setup
 
@@ -44,7 +47,8 @@ Three scripts:
    ./launch.sh
    ```
 
-   Press `Ctrl+C` or `Ctrl+D` to stop. The runners go offline but stay
+   Stop with `Ctrl+C`, `Ctrl+D`, or `Ctrl+\`; closing the terminal or an
+   error exit stops them the same way. The runners go offline but stay
    registered, so the next `./launch.sh` is instant.
 
 ## Authentication
@@ -122,8 +126,36 @@ It clears the local files that block re-registration (including
 `.runner_migrated`, a broker-migration marker that makes `config.sh` refuse to
 reconfigure even after `.runner`/`.credentials` are removed) and re-registers
 via `register.sh` with `--replace`, which clears the stuck session on GitHub's
-side too. Like `unregister.sh`, it refuses to run while any runner process is
-alive.
+side too. It refuses to run only while `launch.sh` is actively supervising
+the runners; if they're alive but orphaned, it stops them itself first.
+
+## Orphaned runners
+
+If something kills the terminal holding `launch.sh` outright — `SIGKILL`, a
+power loss — none of its signal traps get to run, and the runner processes it
+started are left behind with no supervisor. Each surviving `Runner.Listener`
+keeps its GitHub broker session alive, so the next `./launch.sh` hits the same
+conflict as a [zombie runner](#zombie-runners), except waiting won't clear it:
+the session is live, not stale.
+
+Recover with:
+
+```sh
+./nuke-runners.sh            # confirm, then stop launch.sh and all runner processes
+./nuke-runners.sh --dry-run  # show what would be stopped, stop nothing
+./nuke-runners.sh --yes      # skip the confirmation prompt
+```
+
+Both scripts stop orphaned runner processes on their own, so that isn't what
+decides between them. `fix-zombie-runners.sh` refuses to touch a `launch.sh`
+that's still alive and supervising — `nuke-runners.sh` doesn't; it stops that
+`launch.sh` too, along with everything under it, making no GitHub call and
+changing no file. Reach for it first whenever `launch.sh` itself is stuck
+retrying, or you just want a clean slate with nothing touching the network.
+Reach for `fix-zombie-runners.sh` once no `launch.sh` is in the way and the
+conflict is still there — a session genuinely stale on GitHub's side, which
+only clearing the local registration and re-registering through
+`register.sh` (and its GitHub authentication) can fix.
 
 ## How it works
 
