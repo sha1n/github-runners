@@ -96,10 +96,10 @@ main() {
   load_env
   [[ -n "${GITHUB_ORG:-}" ]] || die "GITHUB_ORG is not set (copy .env.example to .env)"
 
-  # Don't deregister runners that are still working — stop them first.
-  if pgrep -f "$RUNNERS_DIR/runner-" >/dev/null 2>&1; then
-    die "runners appear to be running. Stop launch.sh (Ctrl+C/Ctrl+D) first."
-  fi
+  # Don't deregister runners that are still working. A supervised fleet is
+  # refused so a running job is never cut short; orphans, which no launch.sh
+  # can be asked to stop, are cleared here instead.
+  ensure_runners_stopped "$dry_run"
 
   resolve_auth || die "no GitHub API auth available.
   Log in with 'gh auth login' (and add scope: gh auth refresh -h github.com -s admin:org),
