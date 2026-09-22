@@ -17,6 +17,21 @@ Five scripts:
   process, for when they've been orphaned (see
   [Orphaned runners](#orphaned-runners)).
 
+## Host tools
+
+A GitHub-hosted runner gets its tools from the runner image
+([actions/runner-images](https://github.com/actions/runner-images) documents
+each image's list). A self-hosted host is its own image, and `Brewfile` is its
+manifest: the Homebrew tools the fleet scripts and the jobs expect on this
+machine. Install them, and later upgrade them, with:
+
+```sh
+brew bundle
+```
+
+Tools a workflow pins per-run (linters, per-job toolchains) stay out of the
+`Brewfile` on purpose — the file's header says which and why.
+
 ## Setup
 
 1. Copy the config template and fill it in. `.env` holds **non-secret config

@@ -128,6 +128,10 @@ hint on a 403/scope failure.
   `KEY=VALUE` lines — comments there will not survive.
   **Do not write test fixtures into `runners/`**; use a temp dir.
 - `docs/superpowers/` is gitignored (local design specs).
+- `Brewfile` declares the Homebrew tools the host provides to the fleet
+  scripts and the jobs (`brew bundle` installs and upgrades them). A tool a
+  workflow pins per-run (a linter, a per-job toolchain) does not go there;
+  the file's header records the exclusions.
 
 ## Verifying changes
 
