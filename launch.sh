@@ -115,8 +115,18 @@ cleanup() {
   info "All runners stopped. They remain registered."
 }
 
+# A version manager active in the launching shell (e.g. mise) exports these,
+# and an inherited GOROOT overrides each job's own toolchain selection — the
+# job's `go` on PATH then compiles with another toolchain's tools. PATH is
+# deliberately left alone: jobs use runner-provided tools.
+scrub_toolchain_env() {
+  unset GOROOT GOBIN GOTOOLCHAIN
+  return 0
+}
+
 main() {
   load_env
+  scrub_toolchain_env
 
   # A previous launch.sh may have died without stopping its runners. Those
   # orphans keep their GitHub broker session alive, so starting a second

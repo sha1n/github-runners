@@ -9,7 +9,12 @@ Five scripts:
 - **`register.sh`** — first-time setup: downloads the runner once and registers
   N runners.
 - **`launch.sh`** — starts all registered runners and stops them cleanly on
-  `Ctrl+C`, `Ctrl+D`, `Ctrl+\`, a closed terminal, or an error exit.
+  `Ctrl+C`, `Ctrl+D`, `Ctrl+\`, a closed terminal, or an error exit. Discards
+  `GOROOT`, `GOBIN`, and `GOTOOLCHAIN` from the launching shell's environment
+  before starting the runners — a version manager (e.g. mise) exports them, and
+  an inherited `GOROOT` makes every Go job compile with the wrong toolchain.
+  Intentional overrides of those variables are discarded too; `PATH` is
+  inherited as-is.
 - **`unregister.sh`** — deregisters this machine's runners from the org.
 - **`fix-zombie-runners.sh`** — detects and recovers runners stuck with a
   stale GitHub session (see [Zombie runners](#zombie-runners)).
